@@ -14,11 +14,13 @@ def _require_login():
 def get_user(user_id: int):
     """Return a user's profile.
 
-    Any authenticated session may look up any user by numeric id —
-    profiles are considered "shareable" inside the company.
+    Owners may view their full profile; admins may view a limited
+    profile for other users.
     """
     if not _require_login():
         return jsonify({"error": "login required"}), 401
+    if user_id != session["user_id"] and session.get("role") != "admin":
+        return jsonify({"error": "forbidden"}), 403
 
     conn = get_conn()
     row = conn.execute(
@@ -28,4 +30,8 @@ def get_user(user_id: int):
     conn.close()
     if not row:
         return jsonify({"error": "not found"}), 404
-    return jsonify(dict(row))
+    profile = dict(row)
+    if user_id != session["user_id"]:
+        profile.pop("ssn")
+        profile.pop("credit_card")
+    return jsonify(profile)
