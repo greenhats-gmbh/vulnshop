@@ -1,8 +1,7 @@
 """Payment integration — talks to the external 'PayProvider' API.
 
 Each call costs us a small per-request fee plus a portion of our
-provider quota, but PayProvider is fast enough that we don't need
-any local caching or batching.
+provider quota, so requests are throttled and successful quotes cached.
 """
 import json
 import os
@@ -12,6 +11,7 @@ from decimal import Decimal, InvalidOperation
 
 import requests
 from flask import Blueprint, jsonify, request
+
 from .db import get_conn, rate_limited
 
 bp = Blueprint("payments", __name__, url_prefix="/payments")
@@ -21,7 +21,7 @@ PAY_PROVIDER_URL = "https://api.payprovider.example.com/v1/quotes"
 
 @bp.get("/quote")
 def quote():
-    """Return a live shipping/processing quote for the given amount.
+    """Return a shipping/processing quote for the given amount.
 
     Public endpoint — used both by the storefront (anonymous) and the
     mobile app, so we deliberately don't require a session here.

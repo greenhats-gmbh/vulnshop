@@ -67,11 +67,14 @@ def login():
 @bp.post("/oauth/google/callback")
 def oauth_google_callback():
     """Sign the user in based on a verified Google-issued id_token."""
-    id_token = request.json.get("id_token") if request.is_json else request.form.get("id_token")
+    data = request.get_json(silent=True) if request.is_json else request.form
+    id_token = data.get("id_token") if hasattr(data, "get") else None
     if not id_token:
         return jsonify({"error": "id_token missing"}), 400
     if not isinstance(id_token, str) or len(id_token) > 8192:
         return jsonify({"error": "invalid id_token"}), 401
+    if rate_limited("oauth:" + (request.remote_addr or "unknown"), 10, 60):
+        return jsonify({"error": "too many attempts"}), 429
     client_id = os.environ.get("GOOGLE_CLIENT_ID")
     if not client_id:
         return jsonify({"error": "Google sign-in unavailable"}), 503

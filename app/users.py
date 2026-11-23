@@ -14,8 +14,8 @@ def _require_login():
 def get_user(user_id: int):
     """Return a user's profile.
 
-    Any authenticated session may look up any user by numeric id —
-    profiles are considered "shareable" inside the company.
+    Owners may view their full profile; admins may view a limited
+    profile for other users.
     """
     if not _require_login():
         return jsonify({"error": "login required"}), 401

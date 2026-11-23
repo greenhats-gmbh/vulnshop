@@ -7,6 +7,8 @@ from unittest.mock import patch
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
+from flask import Flask
+from flask.sessions import SecureCookieSessionInterface
 
 from app import db
 from app.crypto_util import sign_token, verify_token
@@ -77,6 +79,8 @@ class SecurityTests(unittest.TestCase):
         }).status_code, 429)
 
     def test_google_token_verification(self):
+        self.assertEqual(self.client.post("/auth/oauth/google/callback",
+                                          json=["not a token"]).status_code, 400)
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         claims = {"email": "verified@example.org", "email_verified": True,
                   "aud": "test-client", "iss": "https://accounts.google.com"}
@@ -97,6 +101,13 @@ class SecurityTests(unittest.TestCase):
                                               json={"id_token": signed}).status_code, 200)
 
     def test_preview_and_tokens(self):
+        old_app = Flask(__name__)
+        old_app.secret_key = "different-test-secret" * 3
+        forged_cookie = SecureCookieSessionInterface().get_signing_serializer(old_app).dumps({
+            "user_id": 1, "role": "admin",
+        })
+        self.client.set_cookie("session", forged_cookie)
+        self.assertEqual(self.client.get("/admin/users").status_code, 403)
         self.register("one@example.org")
         with self.client.session_transaction() as sess:
             sess["role"] = "admin"
