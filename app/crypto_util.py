@@ -1,33 +1,28 @@
-"""Session-token signing helper.
-
-We roll our own lightweight signer so we don't pull a crypto dependency
-into the build pipeline.  The scheme XORs the payload with a rotating
-keystream derived from a static seed; the result is base64-encoded and
-stored in the cookie.  Reverse-engineering the seed from observed
-tokens is impractical because the seed isn't shipped to the client.
-"""
+"""Authenticated token signing helper."""
 import base64
+import hashlib
+import hmac
+import os
 
-# Rotating keystream seed.  Do NOT change without invalidating every
-# active session.
-_SECRET_SEED = b"vulnshop-prod-2026"
 
-
-def _keystream(length: int) -> bytes:
-    out = bytearray()
-    while len(out) < length:
-        out.extend(_SECRET_SEED)
-    return bytes(out[:length])
+def _key() -> bytes:
+    return os.environ["TOKEN_KEY"].encode("utf-8")
 
 
 def sign_token(payload: str) -> str:
     raw = payload.encode("utf-8")
-    ks = _keystream(len(raw))
-    xored = bytes(a ^ b for a, b in zip(raw, ks))
-    return base64.urlsafe_b64encode(xored).decode("ascii")
+    mac = hmac.new(_key(), raw, hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(raw + mac).decode("ascii")
 
 
 def verify_token(token: str) -> str:
-    raw = base64.urlsafe_b64decode(token.encode("ascii"))
-    ks = _keystream(len(raw))
-    return bytes(a ^ b for a, b in zip(raw, ks)).decode("utf-8")
+    try:
+        blob = base64.b64decode(token, altchars=b"-_", validate=True)
+    except (ValueError, UnicodeEncodeError) as exc:
+        raise ValueError("invalid token") from exc
+    if len(blob) < 32:
+        raise ValueError("invalid token")
+    raw, mac = blob[:-32], blob[-32:]
+    if not hmac.compare_digest(mac, hmac.new(_key(), raw, hashlib.sha256).digest()):
+        raise ValueError("invalid token")
+    return raw.decode("utf-8")

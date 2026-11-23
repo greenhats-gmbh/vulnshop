@@ -1,5 +1,5 @@
 """Admin tooling — restricted to users whose role == 'admin'."""
-from flask import Blueprint, abort, jsonify, render_template_string, request, session
+from flask import Blueprint, abort, jsonify, request, session
 
 from .db import get_conn
 
@@ -22,8 +22,7 @@ def preview_announcement():
     """
     _require_admin()
     tpl = (request.json or {}).get("template", "")
-    rendered = render_template_string(tpl)
-    return jsonify({"preview": rendered})
+    return jsonify({"preview": tpl})
 
 
 @bp.get("/users")

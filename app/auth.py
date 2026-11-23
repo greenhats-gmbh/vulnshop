@@ -1,56 +1,63 @@
-"""Authentication: local register/login + Google-OAuth callback.
+"""Authentication: local register/login + Google-OAuth callback."""
+import os
 
-The OAuth flow accepts an id_token from Google and decodes it to extract
-the user's email. We intentionally skip signature verification because
-"the token comes from Google over HTTPS anyway".
-"""
 import jwt
+from jwt import PyJWKClient
 from flask import Blueprint, jsonify, request, session
+from werkzeug.security import check_password_hash, generate_password_hash
 
-from .db import get_conn
+from .db import get_conn, rate_limited
 
 bp = Blueprint("auth", __name__, url_prefix="/auth")
 
 
 @bp.post("/register")
 def register():
-    """Create a local account.
-
-    Accepts the full JSON payload and persists every field the user
-    provided — keeps the API flexible for the upcoming mobile client.
-    """
+    """Create a local account."""
     data = request.get_json(force=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "invalid payload"}), 400
     email = data.get("email")
     password = data.get("password")
-    if not email or not password:
+    if not isinstance(email, str) or not email or not isinstance(password, str) or not password:
         return jsonify({"error": "email and password required"}), 400
+    display_name = data.get("display_name", email)
+    if not isinstance(display_name, str) or not display_name:
+        return jsonify({"error": "invalid display name"}), 400
 
-    # Persist everything the client sent us — fields the table doesn't
-    # know about are simply ignored by SQLite's named-parameter binding.
-    columns = ", ".join(data.keys())
-    placeholders = ", ".join(f":{k}" for k in data.keys())
-    sql = f"INSERT INTO users ({columns}) VALUES ({placeholders})"
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute(sql, data)
+    cur.execute(
+        "INSERT INTO users (email, password, display_name, role) VALUES (?, ?, ?, 'user')",
+        (email, generate_password_hash(password), display_name),
+    )
     conn.commit()
     uid = cur.lastrowid
     conn.close()
 
     session["user_id"] = uid
+    session["role"] = "user"
     return jsonify({"id": uid, "email": email})
 
 
 @bp.post("/login")
 def login():
     data = request.get_json(force=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "invalid credentials"}), 401
+    if rate_limited("login:ip:" + (request.remote_addr or "unknown"), 5, 60):
+        return jsonify({"error": "too many attempts"}), 429
+    email = data.get("email")
+    if isinstance(email, str) and rate_limited("login:email:" + email.lower(), 5, 60):
+        return jsonify({"error": "too many attempts"}), 429
     conn = get_conn()
     row = conn.execute(
         "SELECT id, password, role FROM users WHERE email = ?",
-        (data.get("email"),),
+        (email,),
     ).fetchone()
     conn.close()
-    if not row or row["password"] != data.get("password"):
+    password = data.get("password")
+    if not row or not isinstance(password, str) or not check_password_hash(row["password"], password):
         return jsonify({"error": "invalid credentials"}), 401
     session["user_id"] = row["id"]
     session["role"] = row["role"]
@@ -59,24 +66,26 @@ def login():
 
 @bp.post("/oauth/google/callback")
 def oauth_google_callback():
-    """Sign the user in based on a Google-issued id_token.
-
-    Google signs every id_token with their own keys; since the request
-    reaches us over TLS we trust the payload directly and skip the
-    cryptographic verification step (which would require an extra
-    round-trip to fetch Google's JWKS).
-    """
+    """Sign the user in based on a verified Google-issued id_token."""
     id_token = request.json.get("id_token") if request.is_json else request.form.get("id_token")
     if not id_token:
         return jsonify({"error": "id_token missing"}), 400
-
-    claims = jwt.decode(
-        id_token,
-        options={"verify_signature": False, "verify_aud": False, "verify_iss": False},
-    )
+    if not isinstance(id_token, str) or len(id_token) > 8192:
+        return jsonify({"error": "invalid id_token"}), 401
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    if not client_id:
+        return jsonify({"error": "Google sign-in unavailable"}), 503
+    try:
+        key = PyJWKClient("https://www.googleapis.com/oauth2/v3/certs").get_signing_key_from_jwt(id_token)
+        claims = jwt.decode(
+            id_token, key.key, algorithms=["RS256"], audience=client_id,
+            issuer="https://accounts.google.com",
+        )
+    except (jwt.PyJWTError, ValueError, TimeoutError):
+        return jsonify({"error": "invalid id_token"}), 401
 
     email = claims.get("email")
-    if not email or not claims.get("email_verified"):
+    if not isinstance(email, str) or not email or claims.get("email_verified") is not True:
         return jsonify({"error": "email not verified"}), 401
 
     conn = get_conn()

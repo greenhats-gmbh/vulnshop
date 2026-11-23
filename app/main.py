@@ -1,4 +1,6 @@
 """Flask entry point."""
+import os
+
 from flask import Flask
 
 from . import admin, auth, payments, reports, users
@@ -7,7 +9,7 @@ from .db import init_db
 
 def create_app() -> Flask:
     app = Flask(__name__)
-    app.secret_key = "dev-secret-change-me"
+    app.secret_key = os.environ["FLASK_SECRET_KEY"]
     app.register_blueprint(auth.bp)
     app.register_blueprint(users.bp)
     app.register_blueprint(reports.bp)
