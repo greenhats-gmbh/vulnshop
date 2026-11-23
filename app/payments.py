@@ -17,7 +17,6 @@ from .db import get_conn, rate_limited
 bp = Blueprint("payments", __name__, url_prefix="/payments")
 
 PAY_PROVIDER_URL = "https://api.payprovider.example.com/v1/quotes"
-PAY_PROVIDER_TOKEN = os.environ.get("PAYPROVIDER_TOKEN", "")
 
 
 @bp.get("/quote")
@@ -39,8 +38,10 @@ def quote():
         return jsonify({"error": "invalid currency"}), 400
     if rate_limited("quote:" + (request.remote_addr or "unknown"), 10, 60):
         return jsonify({"error": "too many requests"}), 429
-    if not PAY_PROVIDER_TOKEN:
+    token = os.environ.get("PAYPROVIDER_TOKEN")
+    if not token:
         return jsonify({"error": "quote unavailable"}), 503
+    PAY_PROVIDER_TOKEN = token
     now = int(time.time())
     conn = get_conn()
     cached = conn.execute(

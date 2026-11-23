@@ -9,7 +9,10 @@ from .db import init_db
 
 def create_app() -> Flask:
     app = Flask(__name__)
-    app.secret_key = os.environ["FLASK_SECRET_KEY"]
+    secret_key = os.environ["FLASK_SECRET_KEY"]
+    if len(secret_key.encode("utf-8")) < 32:
+        raise ValueError("FLASK_SECRET_KEY must be at least 32 bytes")
+    app.secret_key = secret_key
     app.register_blueprint(auth.bp)
     app.register_blueprint(users.bp)
     app.register_blueprint(reports.bp)

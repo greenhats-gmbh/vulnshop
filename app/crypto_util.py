@@ -6,7 +6,10 @@ import os
 
 
 def _key() -> bytes:
-    return os.environ["TOKEN_KEY"].encode("utf-8")
+    key = os.environ["TOKEN_KEY"].encode("utf-8")
+    if len(key) < 32:
+        raise ValueError("TOKEN_KEY must be at least 32 bytes")
+    return key
 
 
 def sign_token(payload: str) -> str:
